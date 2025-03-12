@@ -43,7 +43,7 @@ install_if_missing(required_packages)
 lapply(required_packages, library, character.only = TRUE)
 
 # Path to the data file on your computer
-file_path <- "C:/Users/Michael Beshay/Downloads/combined_health_nutrition_population_data_with_categories.xlsx"
+file_path <- "combined_health_nutrition_population_data_with_categories.xlsx"
 
 # Check if the data file exists
 if (!file.exists(file_path)) {
