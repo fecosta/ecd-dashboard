@@ -1,0 +1,484 @@
+---
+title: "Dashboard Setup Example"
+output: html_document
+date: "2024-11-28"
+---
+
+# 1. Setup
+
+This section handles the installation and loading of necessary packages, as well as loading and preparing the data.
+
+We start by loading all the necessary tools and libraries required for the dashboard functionality. We list all the packages we need and include a handy function to check if any are missing. If it finds any missing packages, it installs them automatically. After ensuring all packages are available, it loads them into the R session.
+
+Next, the code specifies the location of the data file on the computer. It verifies whether the file exists to prevent errors during execution. Once confirmed, it reads the data from the Excel file into R. The data is then cleaned by removing any incomplete entries and ensuring that the year and value columns are in the correct format for analysis and plotting.
+
+
+```{r}
+
+# List of required packages
+required_packages <- c(
+  "shiny", 
+  "readxl", 
+  "dplyr", 
+  "ggplot2", 
+  "plotly", 
+  "shinycssloaders", 
+  "DT", 
+  "countrycode", 
+  "RColorBrewer"
+)
+
+# Function to install any missing packages
+install_if_missing <- function(packages) {
+  missing_packages <- packages[!(packages %in% installed.packages()[, "Package"])]
+  if (length(missing_packages)) {
+    install.packages(missing_packages, dependencies = TRUE)
+  }
+}
+
+# Install missing packages
+install_if_missing(required_packages)
+
+# Load all packages into the R session
+lapply(required_packages, library, character.only = TRUE)
+
+# Path to the data file on your computer
+file_path <- "C:/Users/Michael Beshay/Downloads/combined_health_nutrition_population_data_with_categories.xlsx"
+
+# Check if the data file exists
+if (!file.exists(file_path)) {
+  stop("Data file not found. Please check the file path.")
+}
+
+# Read the Excel data into R
+df <- read_excel(file_path)
+
+# Clean and prepare the data
+df_cleaned <- df %>%
+  # Remove rows with missing important information
+  filter(
+    !is.na(`Country Name`),
+    !is.na(`Series Name`),
+    !is.na(Year),
+    !is.na(Value),
+    !is.na(wealth_quintiles),
+    !is.na(Category)
+  ) %>%
+  # Convert Year to integers and Value to numeric
+  mutate(
+    Year = as.integer(Year),
+    Value = as.numeric(Value)
+  )
+
+```
+
+
+
+# 2. User Interface (UI)
+
+The dashboard layout is divided into two main parts: a sidebar and a main panel. The sidebar contains various input controls that allow users to filter the data. Users can select a country from a dropdown menu, choose one or more categories via checkboxes, pick a specific metric using radio buttons, and define the range of years with a slider. They can also select the type of plot they prefer (Line, Bar, or Scatter) and decide whether to add an average line to the plot. A reset button is provided to revert all selections to their default states.
+
+The main panel hosts two tabs. The first tab, "Visualization," displays the interactive plot along with a loading spinner that appears while the plot is being generated. Below the plot, there's a note indicating the data source. The second tab, "Statistics," shows a table of the filtered data and includes a button for downloading the data as a CSV file.
+
+
+```{r setup, include=FALSE}
+
+# Define the User Interface (UI) of the dashboard
+ui <- fluidPage(
+  
+  # Add custom styles to make the dashboard look nicer
+  tags$head(
+    tags$style(HTML("
+      /* Style the main title */
+      .custom-title {
+        font-size: 24px;
+        font-weight: bold;
+        text-align: center;
+        margin-bottom: 20px;
+      }
+      
+      /* Set the height of the plot area */
+      #plotContainer {
+        height: 400px; /* Smaller height for the plot */
+      }
+      
+      /* Add some padding to the main area */
+      .main-panel {
+        padding: 10px;
+      }
+      
+      /* Make the text in the dashboard a bit larger */
+      body, label, .control-label, .shiny-input-container {
+        font-size: 14px;
+      }
+      
+      /* Make the tab titles bigger */
+      .nav-tabs > li > a {
+        font-size: 16px;
+      }
+      
+      /* Style the notifications */
+      .shiny-notification {
+        font-size: 14px;
+      }
+      
+      /* Style the source text below the plot */
+      .source-text {
+        font-size: 12px;
+        color: grey;
+        text-align: right;
+        margin-top: 10px;
+      }
+    "))
+  ),
+  
+  # Set the main title of the dashboard
+  titlePanel(
+    div(
+      "Metrics by Wealth Quintiles",
+      class = "custom-title"
+    )
+  ),
+  
+  # Create a layout with a sidebar and main area
+  sidebarLayout(
+    sidebarPanel(
+      width = 3, # Make the sidebar take up 3 columns
+      
+      # Dropdown menu to select a country
+      selectInput(
+        inputId = "country",
+        label = "Select a Country:",
+        choices = sort(unique(df_cleaned$`Country Name`)),
+        selected = sort(unique(df_cleaned$`Country Name`))[1]
+      ),
+      
+      # Checkboxes to select one or more categories
+      checkboxGroupInput(
+        inputId = "category",
+        label = "Select Categories:",
+        choices = sort(unique(df_cleaned$Category)),
+        selected = sort(unique(df_cleaned$Category))[1] # Choose the first category by default
+      ),
+      
+      # Radio buttons to select a single metric
+      radioButtons(
+        inputId = "series",
+        label = "Metrics:",
+        choices = sort(unique(df_cleaned$`Series Name`)), # List all available metrics
+        selected = sort(unique(df_cleaned$`Series Name`))[1] # Choose the first metric by default
+      ),
+      
+      # Slider to select the range of years
+      sliderInput(
+        inputId = "year_range",
+        label = "Select Year Range:",
+        min = min(df_cleaned$Year, na.rm = TRUE),
+        max = max(df_cleaned$Year, na.rm = TRUE),
+        value = c(min(df_cleaned$Year, na.rm = TRUE), max(df_cleaned$Year, na.rm = TRUE)),
+        step = 1,
+        sep = "" # Remove thousand separators
+      ),
+      
+      # Radio buttons to choose the type of plot
+      radioButtons(
+        inputId = "plot_type",
+        label = "Select Plot Type:",
+        choices = c("Line Plot", "Bar Plot", "Scatter Plot"),
+        selected = "Line Plot",
+        inline = TRUE
+      ),
+      
+      # Checkbox to add an average line to the plot
+      checkboxInput(
+        inputId = "add_avg_line",
+        label = "Add Black Dotted Average Line",
+        value = FALSE # Not checked by default
+      ),
+      
+      # Button to reset all filters to their default values
+      actionButton(
+        inputId = "reset_filters",
+        label = "Reset Filters",
+        icon = icon("redo"),
+        class = "btn-primary"
+      )
+    ),
+    
+    mainPanel(
+      class = "main-panel",
+      tabsetPanel(
+        # First tab for visualization
+        tabPanel(
+          "Visualization",
+          br(), # Add a line break for spacing
+          # Container for the plot with a set height
+          div(
+            id = "plotContainer",
+            plotlyOutput("plot", height = "100%") %>% withSpinner(color = "#0dc5c1") # Show a loading spinner
+          ),
+          # Text to show the data source below the plot
+          div(
+            "Source: World Bank - Health, Nutrition, and Population Statistics",
+            class = "source-text"
+          )
+        ),
+        
+        # Second tab for statistics
+        tabPanel(
+          "Statistics",
+          br(), # Add a line break for spacing
+          # Button to download the data as a CSV file
+          downloadButton("downloadData", "Download CSV", class = "btn-success"),
+          br(), br(), # Add two line breaks for spacing
+          # Table to show the statistics with a loading spinner
+          DTOutput("statsTable") %>% withSpinner(color = "#0dc5c1")
+        )
+      )
+    )
+  )
+)
+
+
+```
+
+
+
+# 3. Server Logic
+
+This section contains the backend functionality, which includes data filtering, plot creation, and handling user interactions.
+
+Here's what each part does:
+
+Metric Selection Update: When users select different categories, this part updates the list of available metrics accordingly. If no metrics are available for the chosen categories, it notifies the user with an error message.
+
+Reset Functionality: If users click the "Reset Filters" button, this section restores all input controls to their default settings.
+
+Data Filtering: Based on the user's selections for country, categories, metric, and year range, this reactive function filters the dataset to include only the relevant data.
+
+Plot Preparation: After filtering, this part calculates the average value for each year. This average is used later to add a dashed average line to the plot if the user chooses to.
+
+Plot Creation: Depending on the user's choice of plot type (Line, Bar, or Scatter), this section builds the appropriate plot using ggplot2. It assigns specific colors and shapes to different wealth quintiles for clarity. 
+
+Statistics Table: This part displays the filtered data in a neat, interactive table. Users can search, sort, and navigate through the data. Additionally, there's an option to download the table as a CSV file for offline analysis - if not desired we can exclude it. 
+
+
+```{r}
+
+# Define the server part of the dashboard
+server <- function(input, output, session) {
+  
+  # Update the list of metrics based on selected categories
+  observeEvent(input$category, {
+    if (length(input$category) > 0) { # If any category is selected
+      metrics_filtered <- df_cleaned %>%
+        filter(Category %in% input$category) %>% # Keep only selected categories
+        pull(`Series Name`) %>% 
+        unique() %>% # Get unique metrics
+        sort()
+      
+      if (length(metrics_filtered) > 0) { # If there are metrics available
+        updateRadioButtons(session, "series", choices = metrics_filtered, selected = metrics_filtered[1])
+      } else {
+        # If no metrics are available, clear the selection and show a message
+        updateRadioButtons(session, "series", choices = character(0), selected = NULL)
+        showNotification("No Metrics available for the selected Categories.", type = "error")
+      }
+    } else {
+      # If no categories are selected, show all metrics
+      all_metrics <- sort(unique(df_cleaned$`Series Name`))
+      if (length(all_metrics) > 0) {
+        updateRadioButtons(session, "series", choices = all_metrics, selected = all_metrics[1])
+      } else {
+        # If no metrics are available at all, clear the selection and show a message
+        updateRadioButtons(session, "series", choices = character(0), selected = NULL)
+        showNotification("No Metrics available.", type = "error")
+      }
+    }
+  }, ignoreNULL = FALSE) # Run this when the dashboard starts
+  
+  # Reset all filters to their default values when the button is clicked
+  observeEvent(input$reset_filters, {
+    updateSelectInput(session, "country", selected = sort(unique(df_cleaned$`Country Name`))[1])
+    updateCheckboxGroupInput(session, "category", selected = sort(unique(df_cleaned$Category))[1]) # Reset to first category
+    updateRadioButtons(session, "series", selected = sort(unique(df_cleaned$`Series Name`))[1]) # Reset to first metric
+    updateSliderInput(session, "year_range",
+                      value = c(min(df_cleaned$Year, na.rm = TRUE), max(df_cleaned$Year, na.rm = TRUE)))
+    updateRadioButtons(session, "plot_type", selected = "Line Plot")
+    updateCheckboxInput(session, "add_avg_line", value = FALSE)
+  })
+  
+  # Function to filter the data based on user inputs
+  filtered_data_sidebar <- reactive({
+    data <- df_cleaned
+    
+    # Keep only the selected country
+    if (!is.null(input$country) && input$country != "") {
+      data <- data %>% filter(`Country Name` == input$country)
+    }
+    
+    # Keep only the selected categories
+    if (length(input$category) > 0) {
+      data <- data %>% filter(Category %in% input$category)
+    }
+    
+    # Keep only the selected metric
+    if (!is.null(input$series) && input$series != "") {
+      data <- data %>% filter(`Series Name` == input$series)
+    }
+    
+    # Keep only the data within the selected year range
+    data <- data %>%
+      filter(Year >= input$year_range[1], Year <= input$year_range[2])
+    
+    return(data)
+  })
+  
+  # Prepare the data for plotting
+  plot_data_prepared <- reactive({
+    data <- filtered_data_sidebar()
+    
+    # If there's no data after filtering, return NULL
+    if (nrow(data) == 0) {
+      return(NULL)
+    }
+    
+    # Calculate the average value for each year
+    avg_data <- data %>%
+      group_by(Year) %>%
+      summarize(
+        Avg_Value = mean(Value, na.rm = TRUE),
+        .groups = 'drop'
+      )
+    
+    return(list(main = data, average = avg_data))
+  })
+  
+  # Create the interactive plot
+  output$plot <- renderPlotly({
+    plot_data <- plot_data_prepared()
+    
+    # If there's no data, show a warning and stop
+    if (is.null(plot_data)) {
+      showNotification("No data available for the selected filters. Please adjust your selections.", type = "warning")
+      return(NULL)
+    }
+    
+    main_data <- plot_data$main
+    avg_data <- plot_data$average
+    
+    # Get all unique wealth quintiles
+    quintiles <- sort(unique(main_data$wealth_quintiles))
+    
+    # Choose colors for each quintile
+    num_quintiles <- length(quintiles)
+    if (num_quintiles <= 9) { # Brewer has up to 9 colors
+      quintile_colors <- brewer.pal(num_quintiles, "Set1")
+    } else {
+      # If more than 9, create a larger palette
+      quintile_colors <- colorRampPalette(brewer.pal(9, "Set1"))(num_quintiles)
+    }
+    
+    # Assign colors to quintiles and the average line
+    color_values <- c(quintile_colors, "Average Line" = "black")
+    names(color_values) <- c(quintiles, "Average Line")
+    
+    # Start building the plot
+    p <- ggplot(main_data, aes(x = Year, y = Value, color = wealth_quintiles, shape = wealth_quintiles, 
+                               text = paste0("Year: ", Year, "<br>Value: ", round(Value, 2)))) +
+      labs(
+        x = "Year",
+        y = "Value",
+        color = "Wealth Quintile",
+        shape = "Wealth Quintile",
+        title = paste(main_data$`Country Name`[1], "-", input$series) # Title as "Country - Variable"
+      ) +
+      theme_minimal() +
+      scale_color_manual(values = color_values) + # Use the defined colors
+      scale_shape_manual(values = c(16, 17, 15, 3, 7, 8, 9, 10, 11)) + # Different shapes for quintiles
+      theme(
+        legend.position = "bottom", # Place legend at the bottom
+        plot.title = element_text(size = 16, hjust = 0.5, vjust = 1, face = "bold") # Style the title
+      )
+    
+    # Add the type of plot chosen by the user
+    if (input$plot_type == "Line Plot") {
+      p <- p + geom_line(aes(group = wealth_quintiles), size = 1) # Draw lines
+      p <- p + geom_point(size = 3) # Add points on the lines
+    } else if (input$plot_type == "Bar Plot") {
+      p <- p + geom_bar(stat = "identity", position = position_dodge()) # Create bar plot
+    } else if (input$plot_type == "Scatter Plot") {
+      p <- p + geom_point(size = 3, alpha = 0.7) # Create scatter plot
+    }
+    
+    # Add the average line if the user checked the box
+    if (input$add_avg_line) {
+      p <- p + 
+        geom_line(data = avg_data, aes(x = Year, y = Avg_Value, color = "Average Line"), 
+                  linetype = "dashed", size = 1) + # Draw dashed average line
+        geom_point(data = avg_data, aes(x = Year, y = Avg_Value, color = "Average Line"), 
+                   size = 3, shape = 8) # Add points for average line
+    }
+    
+    # Make the plot interactive with Plotly
+    ggplotly(p, tooltip = "text") %>%
+      layout(
+        title = list(
+          text = paste(main_data$`Country Name`[1], "-", input$series),
+          font = list(size = 16)
+        ),
+        legend = list(
+          orientation = "h", # Horizontal legend
+          x = 0.5, # Center horizontally
+          y = -0.3, # Position below the plot
+          xanchor = "center",
+          yanchor = "top"
+        )
+      ) %>%
+      config(displayModeBar = FALSE) # Hide the toolbar for a cleaner look
+  })
+  
+  # Show the statistics table
+  output$statsTable <- renderDT({
+    data <- filtered_data_sidebar()
+    
+    # If there's no data, don't show the table
+    if (nrow(data) == 0) {
+      return(NULL)
+    }
+    
+    # Create a table with selected columns
+    datatable(
+      data %>%
+        select(`Country Name`, Category, `Series Name`, Year, Value, wealth_quintiles),
+      options = list(pageLength = 10, scrollX = TRUE), # Show 10 rows per page and allow horizontal scrolling
+      rownames = FALSE, # Don't show row numbers
+      filter = "top" # Add filters at the top of the table
+    )
+  })
+  
+  # Allow users to download the data as a CSV file
+  output$downloadData <- downloadHandler(
+    filename = function() {
+      paste("health_nutrition_population_data_", Sys.Date(), ".csv", sep = "") # Name the file with the current date
+    },
+    content = function(file) {
+      write.csv(filtered_data_sidebar(), file, row.names = FALSE) # Write the data to the file
+    }
+  )
+}
+
+```
+
+
+
+# 4. Running the dashboard
+
+
+```{r}
+# Start the Shiny app
+shinyApp(ui = ui, server = server)
+
+```
+
+
